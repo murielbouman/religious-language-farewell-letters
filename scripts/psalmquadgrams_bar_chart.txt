@@ -1,0 +1,153 @@
+#################################
+# Calculate similarity scores of transcribed letters compared to religious texts, based on 4-grams
+# Project: 'Religious language in farewell letters'
+# Muriël Bouman based on a script by Milan van Lange, May 2024
+################################
+
+# Load package libraries --------------------------------------------------
+
+require(stringr)
+require(text2vec)
+require(quanteda)
+require(quanteda.textstats)
+require(tidytext)
+require(tidyverse)
+require(readtext)
+require(tm)
+require(dplyr)
+require(ggplot2)
+require(plotly)
+
+# Load texts --------------------------------------------------
+
+# Psalm
+psalm <- c("data/psalmen_1773.txt")
+target <- readtext(psalm)
+
+# name columns
+colnames(target) <- c("doc_id", "text")
+
+# do pre-processing of texts
+target$text <- char_tolower(target$text)
+target$text <- removeNumbers(target$text)
+target$text <- removePunctuation(target$text)
+target$text <- stripWhitespace(target$text)
+
+
+target %>% 
+  unnest_tokens(output = word, input = text,
+                token = 'ngrams', 
+                n = 4) -> toks_psalm
+
+dict_psalm <- unique(toks_psalm$word) %>%
+  as.character()
+
+dict_psalm
+
+# Letters
+# define folder
+folder_farewell <- "data/collection-249-farewell-letters/only-letters-without-duplicates"
+folder_correspondence <- "data/collection-247-correspondence"
+
+# read in multiple txts from these folders
+ref_farewell <- readtext(paste0(folder_farewell, "/*.txt"))
+ref_correspondence <- readtext(paste0(folder_correspondence, "/*.txt"))
+
+# add column with type
+ref_farewell$type <- c("farewell letter")
+ref_correspondence$type <- c("correspondence")
+
+# remove white spaces in reference sets
+ref_farewell %>%
+  na.omit -> ref_farewell
+
+ref_correspondence %>%
+  na.omit -> ref_correspondence
+
+ref_farewell$text <- char_tolower(ref_farewell$text)
+ref_farewell$text <- removeNumbers(ref_farewell$text)
+ref_farewell$text <- removePunctuation(ref_farewell$text)
+ref_farewell$text <- stripWhitespace(ref_farewell$text)
+
+ref_correspondence$text <- char_tolower(ref_correspondence$text)
+ref_correspondence$text <- removeNumbers(ref_correspondence$text)
+ref_correspondence$text <- removePunctuation(ref_correspondence$text)
+ref_correspondence$text <- stripWhitespace(ref_correspondence$text)
+
+# tokenise
+ref_farewell %>%  unnest_tokens(output = word, input = text,
+                                token = 'ngrams', 
+                                n = 4) -> toks_ref_farewell
+
+ref_correspondence %>%  unnest_tokens(output = word, input = text,
+                                       token = 'ngrams', 
+                                       n = 4) -> toks_ref_correspondence
+
+# top words
+toks_ref_farewell %>% 
+  group_by(word) %>% 
+  tally() %>% 
+  arrange(desc(n)) %>% head(20)
+
+# top words per letter/letter collection (not)
+toks_ref_farewell %>% 
+  group_by(doc_id, word) %>% 
+  tally() %>% 
+  arrange(desc(n)) %>% 
+  group_by(doc_id) %>% 
+  top_n(5) %>% head(20) %>% print(n=20) ->topwords_farewell
+
+# visualise
+require(dplyr)
+
+# filter on psalm words
+filt <- dplyr::filter(toks_ref_farewell, word %in% dict_psalm)
+
+filt %>% 
+  group_by(doc_id, word) %>% 
+  tally() %>% 
+  arrange(desc(n)) %>% 
+  group_by(doc_id) %>% 
+  top_n(5) %>% head(1000) %>% print(n=100) -> topwords2_farewell
+
+# Count the number of unique doc_id's containing at least one psalm 4-gram
+total_documents <- filt %>%
+  summarise(total_docs = n_distinct(doc_id))
+
+print(total_documents)
+
+# Create a new folder
+new_folder <- "results/letters_with_psalms_247"
+if (!dir.exists(new_folder)) {
+  dir.create(new_folder)
+}
+
+# Save filtered documents into the new folder
+for (doc_id in unique(filt$doc_id)) {
+  selected_doc <- ref_farewell[ref_farewell$doc_id == doc_id, ]
+  writeLines(selected_doc$text, file.path(new_folder, paste0(doc_id, ".txt")))
+}
+
+#plot bars
+filt %>% 
+  
+  mutate(doc_id = gsub("\\.txt", "", doc_id)) %>%
+  group_by(doc_id, word) %>% 
+  tally() %>% 
+  ggplot()+ 
+  geom_col(aes(x = fct_rev(doc_id), y = n))+
+  ggtitle("Psalm phrases per letter page - correspondence collection")+
+  coord_flip()
+
+# Convert ggplot to plotly
+interactive_plot <- ggplotly(
+  filt %>% 
+    mutate(doc_id = gsub("\\.txt", "", doc_id)) %>%  # Remove .txt from doc_id
+    group_by(doc_id, word) %>% 
+    tally() %>% 
+    ggplot(aes(x = fct_rev(doc_id), y = n))+
+    geom_col()+
+    ggtitle("Psalm phrases per letter page")+
+    coord_flip()
+)
+interactive_plot

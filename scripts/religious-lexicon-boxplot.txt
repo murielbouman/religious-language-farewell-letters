@@ -1,0 +1,157 @@
+#################################
+# Boxplots based on matching with religious lexicon created with assistance of ChatGPT
+# Project: 'Religious language in farewell letters'
+# Muriël Bouman, based on a script by Milan van Lange, May 2024
+################################
+
+# Load necessary packages
+require(stringr)
+require(text2vec)
+require(quanteda)
+require(quanteda.textstats)
+require(tidytext)
+require(tidyverse)
+require(readtext)
+require(tm)
+require(dplyr)
+require(ggplot2)
+require(plotly)
+
+# Load data and prepare for analysis
+
+# Psalm
+psalm <- c("data/psalmen_1773.txt")
+target <- readtext(psalm)
+
+# Naming columns
+colnames(target) <- c("doc_id", "text")
+
+# Preprocessing texts
+target$text <- char_tolower(target$text)
+target$text <- removeNumbers(target$text)
+target$text <- removePunctuation(target$text)
+target$text <- stripWhitespace(target$text)
+target$text <- removeWords(target$text, stopwords("nl"))
+
+# Tokenizing texts
+target %>% 
+  unnest_tokens(output = word, input = text,
+                token = 'ngrams', 
+                n = 1) -> toks_psalm
+
+# Creating a list of unique psalm words
+dict_psalm <- unique(toks_psalm$word) %>%
+  as.character()
+
+# Loading the letters
+# Defining the folder
+folder_farewell <- "data/collection-249-farewell-letters/only-letters-without-duplicates"
+folder_correspondence <- "data/txts-collection-247-correspondence"
+
+# Reading multiple text files from these folders
+farewell_letters <- readtext(paste0(folder_farewell, "/*.txt"))
+correspondence <- readtext(paste0(folder_correspondence, "/*.txt"))
+
+# Adding a column with the type
+farewell_letters$type <- "afscheidsbrief"
+correspondence$type <- "correspondentie"
+
+# Adding the number of words per document
+farewell_letters <- farewell_letters %>%
+  mutate(nwords = str_count(text, "\\S+"))
+
+correspondence <- correspondence %>%
+  mutate(nwords = str_count(text, "\\S+"))
+
+# Function to remove short documents
+remove_short_documents <- function(data) {
+  data %>%
+    filter(!(type == "correspondentie" & nwords < 20))
+}
+correspondence <- remove_short_documents(correspondence)
+
+# Removing spaces in the reference sets
+farewell_letters %>%
+  na.omit -> farewell_letters
+
+correspondence %>%
+  na.omit -> correspondence
+
+# Preprocessing texts in the reference sets
+farewell_letters$text <- char_tolower(farewell_letters$text)
+farewell_letters$text <- removeNumbers(farewell_letters$text)
+farewell_letters$text <- removePunctuation(farewell_letters$text)
+farewell_letters$text <- stripWhitespace(farewell_letters$text)
+farewell_letters$text <- removeWords(farewell_letters$text, stopwords("nl"))
+
+correspondence$text <- char_tolower(correspondence$text)
+correspondence$text <- removeNumbers(correspondence$text)
+correspondence$text <- removePunctuation(correspondence$text)
+correspondence$text <- stripWhitespace(correspondence$text)
+correspondence$text <- removeWords(correspondence$text, stopwords("nl"))
+
+# Tokenizing texts
+farewell_letters %>%  unnest_tokens(output = word, input = text,
+                                    token = 'ngrams', 
+                                    n = 1) -> toks_farewell
+
+correspondence %>%  unnest_tokens(output = word, input = text,
+                                   token = 'ngrams', 
+                                   n = 1) -> toks_correspondence
+
+# Filtering on psalm words
+filt_farewell <- dplyr::filter(toks_farewell, word %in% dict_psalm)
+filt_correspondence <- dplyr::filter(toks_correspondence, word %in% dict_psalm)
+
+# Calculate the frequency of psalm words per letter for both types of letters
+psalm_freq_per_farewell <- filt_farewell %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n())  
+
+psalm_freq_per_correspondence <- filt_correspondence %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n())
+
+# Combine the datasets
+psalm_freq_per_brief_combined <- bind_rows(mutate(psalm_freq_per_farewell, type = "afscheidsbrieven"), 
+                                           mutate(psalm_freq_per_correspondence, type = "correspondentie"))
+
+# Create boxplots
+ggplot(psalm_freq_per_brief_combined, aes(x = type, y = total_psalm_words, fill = type)) +
+  geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2, notch = FALSE) +
+  ggtitle("Boxplot van het aantal religieuze woorden in de collectie afscheidsbrieven en correspondentie") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        legend.position = "none") +  
+  scale_fill_manual(values = c("grey", "grey")) + 
+  labs(x = "Collectie", y = "Aantal religieuze woorden")
+
+
+# Now use relative counts instead of counts
+# Calculate the total number of words per document
+farewell_letters$total_words <- sapply(strsplit(farewell_letters$text, "\\W+"), length)
+correspondence$total_words <- sapply(strsplit(correspondence$text, "\\W+"), length)
+
+# Calculate the frequency of psalm words per letter for both types of letters
+psalm_freq_per_farewell <- filt_farewell %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n()) %>%
+  left_join(select(farewell_letters, doc_id, total_words), by = "doc_id") %>%
+  mutate(relative_psalm_freq = total_psalm_words / total_words) 
+
+psalm_freq_per_correspondence <- filt_correspondence %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n()) %>%
+  left_join(select(correspondence, doc_id, total_words), by = "doc_id") %>%
+  mutate(relative_psalm_freq = total_psalm_words / total_words)
+
+# Combine the datasets
+psalm_freq_per_brief_combined <- bind_rows(mutate(psalm_freq_per_farewell, type = "afscheidsbrieven"), 
+                                           mutate(psalm_freq_per_correspondence, type = "correspondentie"))
+
+# Create boxplots
+ggplot(psalm_freq_per_brief_combined, aes(x = type, y = relative_psalm_freq, fill = type)) +
+  geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2, notch = FALSE) +
+  ggtitle("Boxplot relatieve frequentie van religieuze woorden per brief per collectie") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), legend.position = "none") + 
+  scale_fill_manual(values = c("grey", "grey")) +  
+  labs(x = "Collectie", y = "Relatieve frequentie religieuze woorden")

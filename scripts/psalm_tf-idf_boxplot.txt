@@ -1,0 +1,193 @@
+#################################
+# Boxplots based on matching with religious texts / religious lexicon
+# Project: 'Psalms in Farewell Letters'
+# Muriël Bouman with assistance from Milan van Lange and ChatGPT, May 2024
+################################
+
+
+# Loading required packages
+require(stringr)
+require(text2vec)
+require(quanteda)
+require(quanteda.textstats)
+require(tidytext)
+require(tidyverse)
+require(readtext)
+require(tm)
+require(dplyr)
+require(ggplot2)
+require(plotly)
+
+# Loading and preparing data for analysis
+
+# Psalm
+psalm <- c("data/psalmen_1773.txt")
+target <- readtext(psalm)
+
+# Naming columns
+colnames(target) <- c("doc_id", "text")
+
+# Pre-processing texts
+target$text <- char_tolower(target$text)
+target$text <- removeNumbers(target$text)
+target$text <- removePunctuation(target$text)
+target$text <- stripWhitespace(target$text)
+target$text <- removeWords(target$text, stopwords("en"))
+
+# Tokenizing texts
+target %>% 
+  unnest_tokens(output = word, input = text,
+                token = 'ngrams', 
+                n = 1) -> toks_psalm
+
+# Creating a list of unique Psalm words
+dict_psalm <- unique(toks_psalm$word) %>%
+  as.character()
+
+# Loading farewell letters
+# Define folders
+folder_farewell <- "data/collection-249-farewell-letters/only-letters-without-duplicates249_only_letters_without_duplicates"
+folder_correspondence <- "data/collection-247-correspondence"
+
+# Reading multiple text files from these folders
+farewell_letters <- readtext(paste0(folder_farewell, "/*.txt"))
+correspondence <- readtext(paste0(folder_correspondence, "/*.txt"))
+
+# Adding a column with type
+farewell_letters$type <- "farewell letter"
+correspondence$type <- "correspondence"
+
+# Adding word count per document
+farewell_letters <- farewell_letters %>%
+  mutate(nwords = str_count(text, "\\S+"))
+
+correspondence <- correspondence %>%
+  mutate(nwords = str_count(text, "\\S+"))
+
+# Function to remove short documents
+remove_short_documents <- function(data) {
+  data %>%
+    filter(!(type == "correspondence" & nwords < 20))
+}
+correspondence <- remove_short_documents(correspondence)
+
+# Removing whitespaces in the reference sets
+farewell_letters %>%
+  na.omit -> farewell_letters
+
+correspondence %>%
+  na.omit -> correspondence
+
+# Pre-processing texts in the reference sets
+farewell_letters$text <- char_tolower(farewell_letters$text)
+farewell_letters$text <- removeNumbers(farewell_letters$text)
+farewell_letters$text <- removePunctuation(farewell_letters$text)
+farewell_letters$text <- stripWhitespace(farewell_letters$text)
+farewell_letters$text <- removeWords(farewell_letters$text, stopwords("en"))
+
+correspondence$text <- char_tolower(correspondence$text)
+correspondence$text <- removeNumbers(correspondence$text)
+correspondence$text <- removePunctuation(correspondence$text)
+correspondence$text <- stripWhitespace(correspondence$text)
+correspondence$text <- removeWords(correspondence$text, stopwords("en"))
+
+# Tokenizing texts
+farewell_letters %>%  unnest_tokens(output = word, input = text,
+                                    token = 'ngrams', 
+                                    n = 1) -> toks_farewell
+
+correspondence %>%  unnest_tokens(output = word, input = text,
+                                   token = 'ngrams', 
+                                   n = 1) -> toks_correspondence
+
+# Filtering on Psalm words
+filt_farewell <- dplyr::filter(toks_farewell, word %in% dict_psalm)
+filt_correspondence <- dplyr::filter(toks_correspondence, word %in% dict_psalm)
+
+# Calculating the frequency of Psalm words per letter for both types of letters
+psalm_freq_per_farewell <- filt_farewell %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n())  # Counting the number of Psalm words per letter
+
+psalm_freq_per_correspondence <- filt_correspondence %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n())  # Counting the number of Psalm words per letter
+
+# Combining the datasets
+psalm_freq_per_letter_combined <- bind_rows(mutate(psalm_freq_per_farewell, type = "farewell letters"), 
+                                           mutate(psalm_freq_per_correspondence, type = "correspondence"))
+
+# Creating the boxplots
+ggplot(psalm_freq_per_letter_combined, aes(x = type, y = total_psalm_words, fill = type)) +
+  geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2, notch = FALSE) +
+  ggtitle("Boxplot of the number of religious words in the collection of farewell letters and correspondence") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),  # Placing labels on x-axis horizontally
+        legend.position = "none") +  # Removing legend
+  scale_fill_manual(values = c("grey", "grey")) +  # Making both boxplots grey
+  labs(x = "Collection", y = "Number of religious words")  # Adjusting labels on x-axis and y-axis
+
+
+# Now using relative counts instead of counts
+# Calculating the total number of words per document
+farewell_letters$total_words <- sapply(strsplit(farewell_letters$text, "\\W+"), length)
+correspondence$total_words <- sapply(strsplit(correspondence$text, "\\W+"), length)
+
+# Calculating the frequency of Psalm words per letter for both types of letters
+psalm_freq_per_farewell <- filt_farewell %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n()) %>%
+  left_join(select(farewell_letters, doc_id, total_words), by = "doc_id") %>%
+  mutate(relative_psalm_freq = total_psalm_words / total_words) # Calculating relative frequency
+
+psalm_freq_per_correspondence <- filt_correspondence %>%
+  group_by(doc_id) %>%
+  summarise(total_psalm_words = n()) %>%
+  left_join(select(correspondence, doc_id, total_words), by = "doc_id") %>%
+  mutate(relative_psalm_freq = total_psalm_words / total_words) # Calculating relative frequency
+
+# Combining the datasets
+psalm_freq_per_letter_combined <- bind_rows(mutate(psalm_freq_per_farewell, type = "farewell letters"), 
+                                           mutate(psalm_freq_per_correspondence, type = "correspondence"))
+
+# Creating the boxplots
+ggplot(psalm_freq_per_letter_combined, aes(x = type, y = relative_psalm_freq, fill = type)) +
+  geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2, notch = FALSE) +
+  ggtitle("Boxplot of relative frequency of religious words per letter per collection") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), legend.position = "none") + 
+  scale_fill_manual(values = c("grey", "grey")) +  # Making both boxplots grey
+  labs(x = "Collection", y = "Relative frequency of religious words")  # Adjusting labels on x-axis and y-axis
+
+# Now using TF-IDF
+# Combining documents from both collections to calculate IDF scores
+combined_letters <- bind_rows(farewell_letters, correspondence)
+
+# Tokenizing combined texts
+combined_letters %>% unnest_tokens(output = word, input = text, token = 'ngrams', n = 1) -> toks_combined
+
+# Calculating IDF scores for the combined collection
+counts_combined <- toks_combined %>% count(doc_id, word) %>% arrange(desc(n))
+idf_combined <- bind_tf_idf(counts_combined, word, doc_id, n)
+
+# Calculating TF scores for individual collections
+counts_farewell <- filt_farewell %>% count(doc_id, word) %>% arrange(desc(n))
+counts_correspondence <- filt_correspondence %>% count(doc_id, word) %>% arrange(desc(n))
+
+# Adding IDF scores from the combined collection to individual TF scores
+tfidf_farewell <- left_join(counts_farewell, idf_combined %>% select(word, idf), by = "word")
+tfidf_farewell <- tfidf_farewell %>% mutate(tf_idf = n * idf)
+
+tfidf_correspondence <- left_join(counts_correspondence, idf_combined %>% select(word, idf), by = "word")
+tfidf_correspondence <- tfidf_correspondence %>% mutate(tf_idf = n * idf)
+
+# Combining TF-IDF scores for both collections
+tfidf_farewell$type <- "farewell letters"
+tfidf_correspondence$type <- "correspondence"
+weights_combined <- bind_rows(tfidf_farewell, tfidf_correspondence)
+
+# Creating boxplots for TF-IDF scores
+ggplot(weights_combined, aes(x = reorder(type, type), y = tf_idf, fill = type)) +
+  geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2, notch = FALSE, position = position_dodge(width = 0.75)) +
+  ggtitle("Boxplot of TF-IDF scores for religious words per letter per collection") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5)) +
+  labs(x = "Collection", y = "TF-IDF score for religious words") +
+  scale_fill_manual(values = c("grey", "grey"))  # Making both boxplots grey
