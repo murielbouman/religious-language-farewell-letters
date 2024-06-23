@@ -35,7 +35,7 @@ This directory contains the R scripts I used, as explained in the third chapter.
   - **Usage:** Requires custom lexicons for religious words and input from farewell letters and correspondence.
   - **Note:** Analyzes the usage of religious language and visualizes the results.
 
-## Instructions
+### Instructions
 
 To run the scripts and reproduce the analysis:
 
